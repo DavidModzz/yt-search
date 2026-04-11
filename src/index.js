@@ -268,6 +268,51 @@ function _allFilter ( result, index, results )
   return ( firstIndex === index )
 }
 
+function _getAcceptLanguage ( options )
+{
+  options = options || {}
+
+  const customAcceptLanguage = (
+    options.acceptLanguage ||
+    options.accept_language
+  )
+
+  if ( typeof customAcceptLanguage === 'string' ) {
+    const value = customAcceptLanguage.trim()
+    if ( value ) return value
+  }
+
+  if ( Array.isArray( customAcceptLanguage ) ) {
+    const values = customAcceptLanguage
+      .map( function ( value ) {
+        return String( value || '' ).trim()
+      } )
+      .filter( Boolean )
+
+    if ( values.length ) {
+      return values.join( ',' )
+    }
+  }
+
+  const hl = String( options.hl || 'en' ).trim()
+  const gl = String( options.gl || 'US' ).trim()
+
+  let locale = hl
+
+  if ( hl.indexOf( '-' ) >= 0 || hl.indexOf( '_' ) >= 0 ) {
+    locale = hl.replace( '_', '-' )
+  } else if ( gl ) {
+    locale = `${hl}-${gl}`
+  }
+
+  if ( !locale ) {
+    locale = 'en-US'
+  }
+
+  const baseLanguage = locale.split( /[-_]/ )[ 0 ] || 'en'
+  return `${locale},${baseLanguage};q=0.9,en-US;q=0.8,en;q=0.7`
+}
+
 /* Request search page results with provided
  * search_query term
  */
@@ -335,7 +380,7 @@ function getSearchResults ( _options, callback )
     'user-agent': _userAgent,
     'accept': 'text/html',
     'accept-encoding': 'gzip',
-    'accept-language': 'en-US'
+    'accept-language': _getAcceptLanguage( _options )
   }
 
   debug( params )
@@ -932,7 +977,7 @@ function getVideoMetaData ( opts, callback )
     'user-agent': _userAgent,
     'accept': 'text/html',
     'accept-encoding': 'gzip',
-    'accept-language': `${hl}-${gl}`
+    'accept-language': _getAcceptLanguage( opts )
   }
 
   params.headers[ 'user-agent' ] = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.1.1 Safari/605.1.15'
@@ -1156,7 +1201,7 @@ function getPlaylistMetaData ( opts, callback )
     'user-agent': _userAgent,
     'accept': 'text/html',
     'accept-encoding': 'gzip',
-    'accept-language': `${hl}-${gl}`
+    'accept-language': _getAcceptLanguage( opts )
   }
 
   _dasu.req( params, function ( err, res, body ) {
