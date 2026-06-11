@@ -1,0 +1,59 @@
+name: Build Distribution
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build distribution
+        run: npm run build
+
+      - name: Check if dist changed
+        id: git-diff
+        run: |
+          if git diff --quiet dist/; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Commit and push if changed
+        if: steps.git-diff.outputs.changed == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/master'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add dist/yt-search.js
+          git commit -m "chore: rebuild distribution [skip ci]"
+          git push
+
+      - name: Comment PR with build status
+        if: github.event_name == 'pull_request' && steps.git-diff.outputs.changed == 'true'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '⚠️ **Build changes detected**: The `dist/yt-search.js` file needs to be rebuilt. Please run `npm run build` locally and commit the changes.'
+            })
