@@ -6,13 +6,11 @@
 ![windows](https://github.com/talmobi/yt-search/actions/workflows/windows-nodejs.yml/badge.svg?branch=master)
 
 #  yt-search
-simple youtube search API and CLI
-
-![](https://thumbs.gfycat.com/ContentShockingCuttlefish-size_restricted.gif)
+simple youtube search API
 
 ## Installation
 ```bash
-npm install yt-search # local module usage
+npm install yt-search
 ```
 
 ## Easy to use
@@ -77,25 +75,6 @@ Supergirl CW Soundtrack - Superman Theme Extended
 ###### try it
 https://runkit.com/talmobi/runkit-npm-yt-search-playlist
 
-## CLI Usage (interactive)
-```bash
-yt-search superman theme
-```
-
-If you have `mpv` installed, yt-search can directly play yt videos (or audio only)
-```bash
-yt-search-video Dank Memes Videos
-yt-search-audio Wagner
-```
-
-If you don't have `mpv` installed, you can alternatively try installing `yt-play-cli`
-```bash
-npm install -g yt-play-cli
-```
-
-see: https://github.com/talmobi/yt-play
-
-
 ## About
 Simple function to get youtube search results.
 
@@ -104,8 +83,6 @@ Not sure..
 
 ## How
 Using HTTP requests and parsing the results with [cheerio](https://github.com/cheeriojs/cheerio).
-
-CLI interactive mode with [node-fzf](https://github.com/talmobi/node-fzf)
 
 ## Options
 ```bash
