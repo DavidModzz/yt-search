@@ -4,7 +4,7 @@
   "description": "search youtube",
   "main": "dist/yt-search.js",
   "files": [
-    "dist/yt-search.js"
+    "dist"
   ],
   "scripts": {
     "debug": "debug=1 node src/index.js --silent",
@@ -21,10 +21,10 @@
   "private": false,
   "repository": {
     "type": "git",
-    "url": "https://github.com/talmobi/yt-search"
+    "url": "https://github.com/DavidModzz/yt-search"
   },
   "bugs": {
-    "url": "https://github.com/talmobi/yt-search/issues",
+    "url": "https://github.com/DavidModzz/yt-search/issues",
     "email": "talmo.christian@gmail.com"
   },
   "dependencies": {
