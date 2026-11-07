@@ -494,7 +494,7 @@ function _parseSearchResultInitialData(responseText, callback) {
               type: 'video',
               videoId: videoId,
               url: url,
-              title: title.trim(),
+              title: _normalizeText(title).trim(),
               description: description,
               image: thumbnail,
               thumbnail: thumbnail,
@@ -559,7 +559,7 @@ function _parseSearchResultInitialData(responseText, callback) {
               type: 'list',
               listId: listId,
               url: _url2,
-              title: _title.trim(),
+              title: _normalizeText(_title).trim(),
               image: _thumbnail,
               thumbnail: _thumbnail,
               videoCount: Number(_parseNumbers(video_count_label)[0]) || video_count,
@@ -608,7 +608,7 @@ function _parseSearchResultInitialData(responseText, callback) {
               url: TEMPLATES.YT + base_url,
               baseUrl: base_url,
               id: _channelId,
-              title: _title2.trim(),
+              title: _normalizeText(_title2).trim(),
               about: about_channel,
               image: _thumbnail2,
               thumbnail: _thumbnail2,
@@ -640,7 +640,7 @@ function _parseSearchResultInitialData(responseText, callback) {
               type: 'live',
               videoId: videoId,
               url: _url3,
-              title: _title3.trim(),
+              title: _normalizeText(_title3).trim(),
               description: _description,
               image: _thumbnail3,
               thumbnail: _thumbnail3,
@@ -953,7 +953,7 @@ function _parsePlaylistInitialData(responseText, callback) {
     var json = item;
     var duration = _parseDuration(_jp.value(json, '$..lengthText..simpleText') || _jp.value(json, '$..thumbnailOverlayTimeStatusRenderer..simpleText') || _jp.query(json, '$..lengthText..text').join('') || _jp.query(json, '$..thumbnailOverlayTimeStatusRenderer..text').join(''));
     var video = {
-      title: _jp.value(json, '$..title..simpleText') || _jp.value(json, '$..title..text') || _jp.query(json, '$..title..text').join(''),
+      title: _normalizeText(_jp.value(json, '$..title..simpleText') || _jp.value(json, '$..title..text') || _jp.query(json, '$..title..text').join('')),
       videoId: _jp.value(json, '$..videoId'),
       listId: listId,
       thumbnail: _normalizeThumbnail(_jp.value(json, '$..thumbnail..url')) || _normalizeThumbnail(_jp.value(json, '$..thumbnails..url')) || _normalizeThumbnail(_jp.value(json, '$..thumbnails')),
@@ -1176,6 +1176,28 @@ function _parseNumbers(label) {
   return results;
 }
 
+/* Helper fn to coerce a text node into a plain string.
+ *
+ * YouTube serves newer surfaces (dynamicTextViewModel, lockup view models) where
+ * `text` holds an object such as { content, styleRuns } instead of a string, so a
+ * jsonpath lookup like '$..title..text' can resolve to an object and break the
+ * string methods used on titles.
+ */
+function _normalizeText(value) {
+  if (typeof value === 'string') return value;
+  if (value == null) return '';
+  if (Array.isArray(value)) {
+    return value.map(_normalizeText).join('');
+  }
+  if (_typeof(value) === 'object') {
+    if (typeof value.content === 'string') return value.content;
+    if (typeof value.text === 'string') return value.text;
+    if (typeof value.simpleText === 'string') return value.simpleText;
+    if (Array.isArray(value.runs)) return _normalizeText(value.runs);
+  }
+  return '';
+}
+
 /* Helper fn to choose a good thumbnail.
  */
 function _normalizeThumbnail(thumbnails) {
@@ -1228,7 +1250,7 @@ function _parseVideoMetaDataTitle(idata) {
   var t = _jp.query(idata, '$..videoPrimaryInfoRenderer.title..text').join('') || _jp.query(idata, '$..videoPrimaryInfoRenderer.title..simpleText').join('') || _jp.query(idata, '$..videoPrimaryRenderer.title..text').join('') || _jp.query(idata, '$..videoPrimaryRenderer.title..simpleText').join('') || _jp.value(idata, '$..title..text') || _jp.value(idata, '$..title..simpleText');
 
   // remove zero-width chars
-  return t.replace(/[\u0000-\u001F\u007F-\u009F\u200b]/g, '');
+  return _normalizeText(t).replace(/[\u0000-\u001F\u007F-\u009F\u200b]/g, '');
 }
 
 // run tests is script is run directly
