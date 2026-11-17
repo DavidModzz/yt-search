@@ -1277,7 +1277,9 @@ function _normalizeThumbnail(thumbnails) {
     // failed to parse thumbnail
     return undefined;
   }
-  t = t.split('?')[0];
+  // Solo las miniaturas estándar funcionan sin la firma ?sqp=...&rs=...; las personalizadas
+  // (hq720_custom_N.jpg) y las traducidas (vi_lc/.../hq720_en-US.jpg) dan 404 sin ella.
+  if (/\/vi\/[^/]+\/(hq720|(hq|mq|sd|maxres)?default)\.\w+\?/.test(t)) t = t.split('?')[0];
   t = t.split('/default.jpg').join('/hqdefault.jpg');
   t = t.split('/default.jpeg').join('/hqdefault.jpeg');
   if (t.indexOf('//') === 0) {
