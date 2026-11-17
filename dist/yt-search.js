@@ -20,24 +20,75 @@ var jpp = require('jsonpath-plus').JSONPath;
 var _jp = {};
 
 // const items = _jp.query( json, '$..itemSectionRenderer..contents.*' )
+// [Zeus patch] fast-jsonpath: las rutas que usa yt-search ($..a..b, .a, .*, [n] y el filtro
+// de "Playlist") se evalúan con un recorrido propio, con el mismo orden y resultados que
+// jsonpath-plus (verificado con páginas reales). _jp.value corta en el primer resultado.
+// Cualquier otra ruta sigue usando jsonpath-plus.
+var _jpCache = new Map();
+var _JP_PLAYLIST_FILTER = '[?(@property == "content" && @ == "Playlist")]';
+function _jpCompile(path) {
+  var steps = _jpCache.get(path);
+  if (steps !== undefined) return steps;
+  steps = null;
+  var rest = path.slice(1);
+  var filter = false;
+  if (rest.slice(-_JP_PLAYLIST_FILTER.length - 1) === '.' + _JP_PLAYLIST_FILTER) {
+    rest = rest.slice(0, -_JP_PLAYLIST_FILTER.length - 1);
+    filter = true;
+  }
+  if (path.slice(0, 1) === '$' && /^(\.\.?(?:[A-Za-z_]\w*|\*)(?:\[\d+\])?)+$/.test(rest)) {
+    // "..x" se tokeniza como ['..', 'x'], ".x" como ['x'] y "[0]" como ['0'], igual que jsonpath-plus.
+    steps = [];
+    rest.replace(/(\.\.?)([A-Za-z_]\w*|\*)(?:\[(\d+)\])?/g, function (_, dots, name, index) {
+      if (dots === '..') steps.push('..');
+      steps.push(name);
+      if (index !== undefined) steps.push(index);
+      return '';
+    });
+    if (filter) steps.push(_JP_PLAYLIST_FILTER);
+  }
+  _jpCache.set(path, steps);
+  return steps;
+}
+var _JP_STOP = {};
+var _hasOwn = Object.prototype.hasOwnProperty;
+// first = true: lanza _JP_STOP al encontrar el primer resultado.
+function _jpTrace(steps, i, val, out, first) {
+  if (i === steps.length) { out.push(val); if (first) throw _JP_STOP; return; }
+  var loc = steps[i];
+  var k;
+  if (loc === '*') {
+    if (Array.isArray(val)) { for (k = 0; k < val.length; k++) _jpTrace(steps, i + 1, val[k], out, first); }
+    else if (val && typeof val === 'object') { for (k in val) if (_hasOwn.call(val, k)) _jpTrace(steps, i + 1, val[k], out, first); }
+  } else if (loc === '..') {
+    _jpTrace(steps, i + 1, val, out, first);
+    if (Array.isArray(val)) {
+      for (k = 0; k < val.length; k++) if (typeof val[k] === 'object') _jpTrace(steps, i, val[k], out, first);
+    } else if (val && typeof val === 'object') {
+      for (k in val) if (_hasOwn.call(val, k) && typeof val[k] === 'object') _jpTrace(steps, i, val[k], out, first);
+    }
+  } else if (loc === _JP_PLAYLIST_FILTER) {
+    // Hijos de val cuyo nombre es "content" y cuyo valor es "Playlist".
+    if (val && typeof val === 'object' && !Array.isArray(val) && _hasOwn.call(val, 'content') && val.content === 'Playlist') {
+      _jpTrace(steps, i + 1, val.content, out, first);
+    }
+  } else if (val && typeof val === 'object' && _hasOwn.call(val, loc)) {
+    _jpTrace(steps, i + 1, val[loc], out, first);
+  }
+}
 _jp.query = function (json, path) {
-  var opts = {
-    path: path,
-    json: json,
-    resultType: 'value'
-  };
-  return jpp(opts);
+  var steps = _jpCompile(path);
+  if (steps && json) { var out = []; _jpTrace(steps, 0, json, out, false); return out; }
+  return jpp({ path: path, json: json, resultType: 'value' });
 };
-
-// const listId = hasList && ( _jp.value( item, '$..playlistId' ) )
 _jp.value = function (json, path) {
-  var opts = {
-    path: path,
-    json: json,
-    resultType: 'value'
-  };
-  var r = jpp(opts)[0];
-  return r;
+  var steps = _jpCompile(path);
+  if (steps && json) {
+    var out = [];
+    try { _jpTrace(steps, 0, json, out, true); } catch (e) { if (e !== _JP_STOP) throw e; }
+    return out[0];
+  }
+  return jpp({ path: path, json: json, resultType: 'value' })[0];
 };
 
 // google bot user-agent
@@ -404,13 +455,24 @@ function getSearchResults(_options, callback) {
  */
 function _parseSearchResultInitialData(responseText, callback) {
   var re = /{.*}/;
-  var $ = _cheerio.load(responseText);
-  var initialData = $('div#initial-data').html() || '';
-  initialData = re.exec(initialData) || '';
+  // [Zeus patch] fast-initial-data: cargar 1,5 MB de HTML en cheerio solo para leer los
+  // <script> era lento. Se leen los <script> con una expresión regular; si la página trae
+  // div#initial-data (formato viejo) se sigue usando cheerio.
+  var initialData = '';
+  var scripts;
+  if (responseText.indexOf('initial-data') >= 0) {
+    var $ = _cheerio.load(responseText);
+    initialData = re.exec($('div#initial-data').html() || '') || '';
+    scripts = $('script').toArray().map(function (el) { return $(el).html(); });
+  } else {
+    scripts = [];
+    var scriptRe = /<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi;
+    var sm;
+    while ((sm = scriptRe.exec(responseText))) scripts.push(sm[1]);
+  }
   if (!initialData) {
-    var scripts = $('script');
     for (var i = 0; i < scripts.length; i++) {
-      var script = $(scripts[i]).html();
+      var script = scripts[i];
       var lines = script.split('\n');
       lines.forEach(function (line) {
         var i;

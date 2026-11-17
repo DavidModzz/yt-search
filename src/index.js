@@ -14,27 +14,100 @@ const RETRY_INTERVAL = 333 // ms
 const jpp = require( 'jsonpath-plus' ).JSONPath
 const _jp = {}
 
-// const items = _jp.query( json, '$..itemSectionRenderer..contents.*' )
-_jp.query = function ( json, path ) {
-  const opts = {
-    path: path,
-    json: json,
-    resultType: 'value'
+// [Zeus patch] fast-jsonpath: las rutas que usa yt-search ($..a..b, .a, .*, [n] y el filtro
+// de "Playlist") se evalúan con un recorrido propio, con el mismo orden y resultados que
+// jsonpath-plus (verificado con páginas reales). _jp.value corta en el primer resultado.
+// Cualquier otra ruta sigue usando jsonpath-plus.
+const _jpCache = new Map()
+const _JP_PLAYLIST_FILTER = '[?(@property == "content" && @ == "Playlist")]'
+
+function _jpCompile ( path ) {
+  let steps = _jpCache.get( path )
+  if ( steps !== undefined ) return steps
+  steps = null
+
+  let rest = path.slice( 1 )
+  let filter = false
+  if ( rest.slice( -_JP_PLAYLIST_FILTER.length - 1 ) === '.' + _JP_PLAYLIST_FILTER ) {
+    rest = rest.slice( 0, -_JP_PLAYLIST_FILTER.length - 1 )
+    filter = true
   }
 
-  return jpp( opts )
+  if ( path.slice( 0, 1 ) === '$' && /^(\.\.?(?:[A-Za-z_]\w*|\*)(?:\[\d+\])?)+$/.test( rest ) ) {
+    // "..x" se tokeniza como ['..', 'x'], ".x" como ['x'] y "[0]" como ['0'], igual que jsonpath-plus.
+    steps = []
+    rest.replace( /(\.\.?)([A-Za-z_]\w*|\*)(?:\[(\d+)\])?/g, function ( _, dots, name, index ) {
+      if ( dots === '..' ) steps.push( '..' )
+      steps.push( name )
+      if ( index !== undefined ) steps.push( index )
+      return ''
+    } )
+    if ( filter ) steps.push( _JP_PLAYLIST_FILTER )
+  }
+
+  _jpCache.set( path, steps )
+  return steps
+}
+
+const _JP_STOP = {}
+const _hasOwn = Object.prototype.hasOwnProperty
+
+// first = true: lanza _JP_STOP al encontrar el primer resultado.
+function _jpTrace ( steps, i, val, out, first ) {
+  if ( i === steps.length ) {
+    out.push( val )
+    if ( first ) throw _JP_STOP
+    return
+  }
+
+  const loc = steps[ i ]
+  if ( loc === '*' ) {
+    if ( Array.isArray( val ) ) {
+      for ( let k = 0; k < val.length; k++ ) _jpTrace( steps, i + 1, val[ k ], out, first )
+    } else if ( val && typeof val === 'object' ) {
+      for ( const k in val ) if ( _hasOwn.call( val, k ) ) _jpTrace( steps, i + 1, val[ k ], out, first )
+    }
+  } else if ( loc === '..' ) {
+    _jpTrace( steps, i + 1, val, out, first )
+    if ( Array.isArray( val ) ) {
+      for ( let k = 0; k < val.length; k++ ) if ( typeof val[ k ] === 'object' ) _jpTrace( steps, i, val[ k ], out, first )
+    } else if ( val && typeof val === 'object' ) {
+      for ( const k in val ) if ( _hasOwn.call( val, k ) && typeof val[ k ] === 'object' ) _jpTrace( steps, i, val[ k ], out, first )
+    }
+  } else if ( loc === _JP_PLAYLIST_FILTER ) {
+    // Hijos de val cuyo nombre es "content" y cuyo valor es "Playlist".
+    if ( val && typeof val === 'object' && !Array.isArray( val ) && _hasOwn.call( val, 'content' ) && val.content === 'Playlist' ) {
+      _jpTrace( steps, i + 1, val.content, out, first )
+    }
+  } else if ( val && typeof val === 'object' && _hasOwn.call( val, loc ) ) {
+    _jpTrace( steps, i + 1, val[ loc ], out, first )
+  }
+}
+
+// const items = _jp.query( json, '$..itemSectionRenderer..contents.*' )
+_jp.query = function ( json, path ) {
+  const steps = _jpCompile( path )
+  if ( steps && json ) {
+    const out = []
+    _jpTrace( steps, 0, json, out, false )
+    return out
+  }
+  return jpp( { path: path, json: json, resultType: 'value' } )
 }
 
 // const listId = hasList && ( _jp.value( item, '$..playlistId' ) )
 _jp.value = function ( json, path ) {
-  const opts = {
-    path: path,
-    json: json,
-    resultType: 'value'
+  const steps = _jpCompile( path )
+  if ( steps && json ) {
+    const out = []
+    try {
+      _jpTrace( steps, 0, json, out, true )
+    } catch ( e ) {
+      if ( e !== _JP_STOP ) throw e
+    }
+    return out[ 0 ]
   }
-
-  const r = jpp( opts )[ 0 ]
-  return r
+  return jpp( { path: path, json: json, resultType: 'value' } )[ 0 ]
 }
 
 // google bot user-agent
@@ -489,16 +562,26 @@ function getSearchResults ( _options, callback )
 function _parseSearchResultInitialData ( responseText, callback )
 {
   const re = /{.*}/
-  const $ = _cheerio.load( responseText )
 
-  let initialData = $( 'div#initial-data' ).html() || ''
-  initialData = re.exec( initialData ) || ''
+  // [Zeus patch] fast-initial-data: cargar 1,5 MB de HTML en cheerio solo para leer los
+  // <script> era lento. Se leen los <script> con una expresión regular; si la página trae
+  // div#initial-data (formato viejo) se sigue usando cheerio.
+  let initialData = ''
+  let scripts
+  if ( responseText.indexOf( 'initial-data' ) >= 0 ) {
+    const $ = _cheerio.load( responseText )
+    initialData = re.exec( $( 'div#initial-data' ).html() || '' ) || ''
+    scripts = $( 'script' ).toArray().map( function ( el ) { return $( el ).html() } )
+  } else {
+    scripts = []
+    const scriptRe = /<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi
+    let sm
+    while ( ( sm = scriptRe.exec( responseText ) ) ) scripts.push( sm[ 1 ] )
+  }
 
   if ( !initialData ) {
-    const scripts = $( 'script' )
-
     for ( let i = 0; i < scripts.length; i++ ) {
-      const script = $( scripts[ i ] ).html()
+      const script = scripts[ i ]
 
       const lines = script.split( '\n' )
       lines.forEach( function ( line ) {
