@@ -501,6 +501,13 @@ function _parseSearchResultInitialData(responseText, callback) {
   debug('items.length: ' + items.length);
   for (var _i = 0; _i < items.length; _i++) {
     var item = items[_i];
+
+    // [Zeus patch] lockup-video
+    var lockupVideo = item && item.lockupViewModel && _parseVideoLockup(item.lockupViewModel);
+    if (lockupVideo) {
+      results.push(lockupVideo);
+      continue;
+    }
     var result = undefined;
     var type = 'unknown';
     var hasList = _jp.value(item, '$..compactPlaylistRenderer') || _jp.value(item, '$..playlistRenderer') || _jp.value(item, "$..lockupViewModel..metadata..metadataRows[0]..metadataParts[1]..text.[?(@property == \"content\" && @ == \"Playlist\")]");
@@ -784,6 +791,90 @@ function getVideoMetaData(opts, callback) {
     }
   });
 }
+/* [Zeus patch] lockup-video: YouTube sirve a veces (prueba A/B) los resultados
+ * de búsqueda como lockupViewModel en lugar de videoRenderer. Sin esto la página
+ * no tiene ningún videoRenderer y la búsqueda devuelve 0 videos.
+ * Devuelve el resultado de tipo 'video' o null (no es un video, o es en vivo).
+ */
+function _parseVideoLockup(lockup) {
+  if (!lockup || lockup.contentType !== 'LOCKUP_CONTENT_TYPE_VIDEO' || !lockup.contentId) return null;
+  var videoId = lockup.contentId;
+  var meta = lockup.metadata && lockup.metadata.lockupMetadataViewModel || {};
+  var title = _normalizeText(meta.title && meta.title.content).trim();
+  if (!title) return null;
+  var badges = [];
+  var sources = [];
+  (function walk(o) {
+    if (!o || typeof o !== 'object') return;
+    if (o.thumbnailBadgeViewModel && typeof o.thumbnailBadgeViewModel.text === 'string') badges.push(o.thumbnailBadgeViewModel.text);
+    for (var k in o) walk(o[k]);
+  })(lockup.contentImage);
+  var image = lockup.contentImage && lockup.contentImage.thumbnailViewModel && lockup.contentImage.thumbnailViewModel.image;
+  if (image && Array.isArray(image.sources)) sources = image.sources;
+  var best = sources.reduce(function (a, b) {
+    return !a || (b.width || 0) > (a.width || 0) ? b : a;
+  }, null);
+  var thumbnail = _normalizeThumbnail(best && best.url) || 'https://i.ytimg.com/vi/' + videoId + '/hqdefault.jpg';
+  var lengthText = badges.filter(function (t) {
+    return /\d:\d/.test(t);
+  })[0];
+  // sin duración (EN VIVO, PRÓXIMAMENTE): no es un video descargable
+  if (!lengthText) return null;
+  var duration = _parseDuration(lengthText);
+  var rows = meta.metadata && meta.metadata.contentMetadataViewModel && meta.metadata.contentMetadataViewModel.metadataRows || [];
+  var first = rows[0] && rows[0].metadataParts || [];
+  var author_name = '';
+  var author_url = '';
+  var others = [];
+  first.forEach(function (part) {
+    var text = part.avatarStack && part.avatarStack.avatarStackViewModel && part.avatarStack.avatarStackViewModel.text || part.text;
+    if (!author_name && text && (part.avatarStack || text.commandRuns)) {
+      author_name = _normalizeText(text.content).trim();
+      var cmd = text.commandRuns && text.commandRuns[0] && text.commandRuns[0].onTap && text.commandRuns[0].onTap.innertubeCommand || {};
+      author_url = cmd.browseEndpoint && cmd.browseEndpoint.canonicalBaseUrl || cmd.commandMetadata && cmd.commandMetadata.webCommandMetadata && cmd.commandMetadata.webCommandMetadata.url || '';
+    } else if (part.text) {
+      others.push(_normalizeText(part.text.content).trim());
+    }
+  });
+  var description = rows.slice(1).map(function (row) {
+    return (row.metadataParts || []).map(function (part) {
+      return part.text && !part.text.commandRuns ? _normalizeText(part.text.content) : '';
+    }).join(' ').trim();
+  }).filter(Boolean).join(' ');
+  return {
+    type: 'video',
+    videoId: videoId,
+    url: TEMPLATES.YT + '/watch?v=' + videoId,
+    title: title,
+    description: description,
+    image: thumbnail,
+    thumbnail: thumbnail,
+    seconds: Number(duration.seconds),
+    timestamp: duration.timestamp,
+    duration: duration,
+    ago: others[1] || '',
+    views: _parseViewCount(others[0]),
+    author: {
+      name: author_name,
+      url: TEMPLATES.YT + author_url
+    }
+  };
+}
+
+/* "1.2B" -> 1200000000, "261K" -> 261000, "8,2 M" -> 8200000, "1,2 mil M" -> 1200000000 */
+function _parseViewCount(label) {
+  if (!label) return 0;
+  var m = String(label).match(/(\d+(?:[.,]\d+)*)\s*([^\d\s]*)\s*([^\d\s]*)/);
+  if (!m) return 0;
+  var digits = m[1];
+  var unit = (m[2] + ' ' + m[3]).toLowerCase();
+  var mult = 1;
+  if (/\b(b|bn|mrd)\b|mil m/.test(unit)) mult = 1e9;else if (/\bm\b|mi\b|mln/.test(unit)) mult = 1e6;else if (/\b(k|mil)\b/.test(unit)) mult = 1e3;
+  var num;
+  if (mult > 1) num = Number(digits.replace(',', '.'));else num = Number(digits.replace(/[.,]/g, ''));
+  return Math.round((num || 0) * mult);
+}
+
 function _parseVideoInitialData(responseText, callback) {
   debug('_parseVideoInitialData');
 
